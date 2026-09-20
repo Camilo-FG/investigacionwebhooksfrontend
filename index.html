@@ -116,6 +116,16 @@
           </tbody>
         </table>
       </section>
+
+      <section>
+        <h2>4. Probar firma inválida</h2>
+        <p class="lead">
+          Envía a Servicio B un webhook con una firma falsa. Debe rechazarlo con 401 y no
+          aparecer en la tabla de arriba.
+        </p>
+        <button id="btn-firma">Enviar webhook con firma falsa</button>
+        <p id="status-firma" class="status"></p>
+      </section>
     </main>
     <script src="./app.js"></script>
   </body>
