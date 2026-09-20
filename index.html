@@ -1,132 +1,18 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Webhooks Demo</title>
-    <style>
-      :root {
-        --bg: #0f1419;
-        --panel: #1a2332;
-        --text: #e7ecf3;
-        --muted: #9aa8bc;
-        --accent: #3d8bfd;
-        --ok: #3dd68c;
-        --border: #2a3648;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: "Segoe UI", system-ui, sans-serif;
-        background: radial-gradient(ellipse at top, #1a2740 0%, var(--bg) 55%);
-        color: var(--text);
-        min-height: 100vh;
-        padding: 2rem 1.25rem 3rem;
-      }
-      main {
-        max-width: 880px;
-        margin: 0 auto;
-        display: grid;
-        gap: 1.5rem;
-      }
-      h1 { margin: 0 0 0.25rem; font-size: 1.75rem; }
-      .lead { color: var(--muted); margin: 0 0 0.5rem; }
-      section {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 1.25rem;
-      }
-      h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }
-      label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
-      input {
-        width: 100%;
-        padding: 0.65rem 0.75rem;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: #111820;
-        color: var(--text);
-        margin-bottom: 0.75rem;
-      }
-      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-      button {
-        border: 0;
-        border-radius: 8px;
-        padding: 0.7rem 1rem;
-        background: var(--accent);
-        color: white;
-        font-weight: 600;
-        cursor: pointer;
-      }
-      button:hover { filter: brightness(1.08); }
-      .status { min-height: 1.25rem; font-size: 0.9rem; color: var(--ok); margin-top: 0.5rem; }
-      .status.error { color: #ff7b72; }
-      table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-      th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid var(--border); }
-      th { color: var(--muted); font-weight: 600; }
-      @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
-    </style>
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0a0e17" />
+    <title>Webhooks Lab</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%237c8cff'/%3E%3Cpath d='M9 16h13M17 10l6 6-6 6' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
   </head>
   <body>
-    <main>
-      <header>
-        <h1>Investigación Webhooks</h1>
-        <p class="lead">Suscripción → crear pedido (trigger) → Servicio B recibe el evento firmado.</p>
-      </header>
-
-      <section>
-        <h2>1. Suscripción</h2>
-        <label for="url">URL del webhook (interna Docker)</label>
-        <input id="url" value="http://service-b:3001/webhooks/pedido" />
-        <label for="event">Evento</label>
-        <input id="event" value="pedido.creado" />
-        <button id="btn-sub">Registrar suscripción</button>
-        <p id="status-sub" class="status"></p>
-      </section>
-
-      <section>
-        <h2>2. Crear pedido (trigger)</h2>
-        <div class="row">
-          <div>
-            <label for="producto">Producto</label>
-            <input id="producto" value="Café" />
-          </div>
-          <div>
-            <label for="monto">Monto</label>
-            <input id="monto" type="number" step="0.01" value="12.5" />
-          </div>
-        </div>
-        <button id="btn-pedido">Crear pedido</button>
-        <p id="status-pedido" class="status"></p>
-      </section>
-
-      <section>
-        <h2>3. Eventos recibidos (Servicio B)</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Producto</th>
-              <th>Monto</th>
-              <th>Fecha pedido</th>
-              <th>Recibido</th>
-            </tr>
-          </thead>
-          <tbody id="events-body">
-            <tr><td colspan="4">Sin eventos aún…</td></tr>
-          </tbody>
-        </table>
-      </section>
-
-      <section>
-        <h2>4. Probar firma inválida</h2>
-        <p class="lead">
-          Envía a Servicio B un webhook con una firma falsa. Debe rechazarlo con 401 y no
-          aparecer en la tabla de arriba.
-        </p>
-        <button id="btn-firma">Enviar webhook con firma falsa</button>
-        <p id="status-firma" class="status"></p>
-      </section>
-    </main>
-    <script src="./app.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
