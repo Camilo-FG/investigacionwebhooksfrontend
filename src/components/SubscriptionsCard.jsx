@@ -3,9 +3,11 @@ import Card from './Card.jsx';
 import Icon from './Icon.jsx';
 
 // Con `npm run dev` los servicios corren en localhost; dentro de Docker se llaman por su nombre.
+// En el despliegue público (Netlify) la URL de la tienda llega por VITE_PUBLIC_WEBHOOK_URL.
 const URL_DOCKER = 'http://service-a:3000/webhooks/payments';
 const URL_LOCAL = 'http://localhost:3000/webhooks/payments';
-const DEFAULT_URL = import.meta.env.DEV ? URL_LOCAL : URL_DOCKER;
+const URL_PUBLIC = import.meta.env.VITE_PUBLIC_WEBHOOK_URL || '';
+const DEFAULT_URL = URL_PUBLIC || (import.meta.env.DEV ? URL_LOCAL : URL_DOCKER);
 
 export default function SubscriptionsCard({ subscriptions, eventName, onAdd, onRemove }) {
   const [url, setUrl] = useState(DEFAULT_URL);
@@ -45,6 +47,11 @@ export default function SubscriptionsCard({ subscriptions, eventName, onAdd, onR
           autoComplete="off"
         />
         <div className="chips" role="group" aria-label="URLs de ejemplo">
+          {URL_PUBLIC && (
+            <button type="button" className="chip" data-active={url === URL_PUBLIC} onClick={() => setUrl(URL_PUBLIC)}>
+              En línea · Railway
+            </button>
+          )}
           <button type="button" className="chip" data-active={url === URL_DOCKER} onClick={() => setUrl(URL_DOCKER)}>
             Con Docker · service-a
           </button>
@@ -58,7 +65,9 @@ export default function SubscriptionsCard({ subscriptions, eventName, onAdd, onR
           </p>
         ) : (
           <p id="sub-hint" className="hint">
-            Dentro de Docker los servicios se ven por su nombre (service-a), no por localhost.
+            {URL_PUBLIC
+              ? 'En línea, el proveedor avisa a la URL pública de la tienda; service-a y localhost solo existen en tu compu.'
+              : 'Dentro de Docker los servicios se ven por su nombre (service-a), no por localhost.'}
           </p>
         )}
 
