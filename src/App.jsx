@@ -1,8 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { usePolling, useUnseen } from './usePolling.js';
 import { confirmationMs, FINAL_STATUSES, shortId } from './format.js';
-import Header from './components/Header.jsx';
+import TopBar from './store/TopBar.jsx';
+import Store from './store/Store.jsx';
+import { cartCount, cartTotal, PRODUCTS } from './store/catalog.js';
 import FlowDiagram from './components/FlowDiagram.jsx';
 import SubscriptionsCard from './components/SubscriptionsCard.jsx';
 import OrderCard from './components/OrderCard.jsx';
@@ -128,7 +130,18 @@ export default function App() {
   // ---- Formulario de tarjeta de ONVO (solo mientras se paga un pago con ONVO) ----
   const [checkout, setCheckout] = useState(null);
 
-  async function createPayment(product, amount, provider) {
+  // ---- Vista: el supermercado (por defecto) o el panel técnico con el diagrama y los webhooks ----
+  const [view, setView] = useState('tienda');
+  useEffect(() => {
+    document.body.dataset.view = view;
+  }, [view]);
+
+  // Carrito del supermercado: { idProducto: cantidad }.
+  const [cart, setCart] = useState({});
+  const cartLines = PRODUCTS.filter((p) => cart[p.id]).map((product) => ({ product, qty: cart[product.id] }));
+
+  // onCreated(payment) se llama en cuanto la tienda crea el pago (antes de esperar el resultado).
+  async function createPayment(product, amount, provider, onCreated) {
     const run = ++runRef.current;
     const live = () => runRef.current === run;
 
@@ -143,7 +156,8 @@ export default function App() {
       return;
     }
     refreshAll();
-    notify('ok', `Pedido de "${product}" creado. Pago ${shortId(payment.id)} en PENDING.`);
+    notify('ok', `Pedido creado. Pago ${shortId(payment.id)} en PENDING.`);
+    onCreated?.(payment);
 
     if (provider === 'ONVO') {
       await payWithOnvo(payment, live);
@@ -241,6 +255,11 @@ export default function App() {
     setCheckout(null);
     setFlow({ phase: 'timeout', provider: 'ONVO' });
     refreshAll();
+  }
+
+  // Vuelve a abrir el formulario de ONVO de una compra que sigue pendiente (por ejemplo, si se cerró el modal).
+  function reopenCheckout(purchase) {
+    if (purchase?.onvo) setCheckout({ paymentId: purchase.id, onvo: purchase.onvo });
   }
 
   // El SDK avisa que ONVO aceptó la tarjeta; el resultado oficial todavía lo trae el webhook.
@@ -356,12 +375,30 @@ export default function App() {
   const openPayment = detail?.type === 'payment' ? payments.find((p) => p.id === detail.id) : null;
 
   return (
-    <div className="app">
-      <Header
+    <div className="app" data-view={view}>
+      <TopBar
+        view={view}
+        onView={setView}
+        cartCount={cartCount(cartLines)}
+        cartTotal={cartTotal(cartLines)}
+        onCart={() => document.getElementById('carrito')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
         statusA={serviceState(ordersQ, paymentsQ, receivedQ)}
         statusB={serviceState(subsQ, deliveriesQ, providerPaymentsQ)}
       />
 
+      {view === 'tienda' ? (
+        <Store
+          cart={cart}
+          setCart={setCart}
+          payments={payments}
+          orders={orders}
+          createPayment={createPayment}
+          creating={flow.phase === 'creating'}
+          reopenCheckout={reopenCheckout}
+          onOpenPayment={(id) => setDetail({ type: 'payment', id })}
+        />
+      ) : (
+        <>
       <main>
         <FlowDiagram flow={flow} />
 
@@ -417,11 +454,12 @@ export default function App() {
           </div>
         </div>
       </main>
-
       <footer>
         Proyecto de Paradigmas de Programación · Investigación sobre Webhooks · Servicio B (proveedor) → webhook firmado
         con HMAC → Servicio A (tienda)
       </footer>
+        </>
+      )}
 
       <DeliveryInspector
         delivery={openDelivery}
