@@ -1,0 +1,28 @@
+# Despliegue en Netlify. Cumple el mismo papel que nginx.conf en Docker:
+# sirve la app y reenvía /api/a y /api/b a los servicios, así el navegador no necesita CORS.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Servicio A (tienda) desplegado en Railway.
+[[redirects]]
+  from = "/api/a/*"
+  to = "https://servicio-a-production.up.railway.app/:splat"
+  status = 200
+  force = true
+
+# Servicio B (proveedor simulado) desplegado en Railway.
+[[redirects]]
+  from = "/api/b/*"
+  to = "https://servicio-b-production.up.railway.app/:splat"
+  status = 200
+  force = true
+
+# La app es de una sola página: cualquier otra ruta carga index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
