@@ -1,19 +1,25 @@
 import { useCallback, useRef, useState } from 'react';
 import { api } from './api.js';
-import { usePolling } from './usePolling.js';
-import { latencyMs, shortId } from './format.js';
+import { usePolling, useUnseen } from './usePolling.js';
+import { confirmationMs, FINAL_STATUSES, shortId } from './format.js';
 import Header from './components/Header.jsx';
 import FlowDiagram from './components/FlowDiagram.jsx';
 import SubscriptionsCard from './components/SubscriptionsCard.jsx';
 import OrderCard from './components/OrderCard.jsx';
-import SecurityCard from './components/SecurityCard.jsx';
-import EventsCard from './components/EventsCard.jsx';
 import OrdersCard from './components/OrdersCard.jsx';
+import DeliveriesCard from './components/DeliveriesCard.jsx';
+import ReceivedCard from './components/ReceivedCard.jsx';
+import SecurityCard from './components/SecurityCard.jsx';
+import SectionTabs from './components/SectionTabs.jsx';
+import DeliveryInspector from './components/DeliveryInspector.jsx';
+import ReceivedInspector from './components/ReceivedInspector.jsx';
+import PaymentTimeline from './components/PaymentTimeline.jsx';
 import Toasts from './components/Toasts.jsx';
 
-// Único evento que emite el Servicio A (al crear un pedido).
-const EVENT_NAME = 'pedido.creado';
-const DELIVERY_TIMEOUT_MS = 6500;
+// Único evento que envía el proveedor (Servicio B) cuando un pago cambia de estado.
+const EVENT_NAME = 'payment.updated';
+// Con Supabase cada consulta tarda; un pago diferido necesita dos rondas de procesamiento.
+const CONFIRMATION_TIMEOUT_MS = 30000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -23,14 +29,30 @@ const serviceState = (...queries) => {
 };
 
 export default function App() {
-  // Datos en vivo: A (suscripciones y pedidos) y B (eventos recibidos).
-  const subsQ = usePolling(api.listSubscriptions, 2500);
+  // Datos en vivo: A (pedidos, pagos, webhooks recibidos) y B (cobros, suscripciones, webhooks enviados).
   const ordersQ = usePolling(api.listOrders, 2000);
-  const eventsQ = usePolling(api.listEvents, 2000);
+  const paymentsQ = usePolling(api.listPayments, 2000);
+  const receivedQ = usePolling(api.listReceived, 2000);
+  const simulationQ = usePolling(api.getSimulation, 4000);
+  const providerPaymentsQ = usePolling(api.listProviderPayments, 2000);
+  const subsQ = usePolling(api.listSubscriptions, 2500);
+  const deliveriesQ = usePolling(api.listDeliveries, 2000);
 
-  const subscriptions = subsQ.data ?? [];
   const orders = ordersQ.data ?? [];
-  const events = eventsQ.data ?? [];
+  const payments = paymentsQ.data ?? [];
+  const received = receivedQ.data ?? [];
+  const storeDown = simulationQ.data?.storeDown === true;
+  const providerPayments = providerPaymentsQ.data ?? [];
+  const subscriptions = subsQ.data ?? [];
+  const deliveries = deliveriesQ.data ?? [];
+
+  const refreshAll = useCallback(() => {
+    ordersQ.refresh();
+    paymentsQ.refresh();
+    receivedQ.refresh();
+    providerPaymentsQ.refresh();
+    deliveriesQ.refresh();
+  }, [ordersQ.refresh, paymentsQ.refresh, receivedQ.refresh, providerPaymentsQ.refresh, deliveriesQ.refresh]);
 
   // ---- Notificaciones ----
   const [toasts, setToasts] = useState([]);
@@ -40,32 +62,84 @@ export default function App() {
     (tone, text) => {
       const id = ++toastId.current;
       setToasts((t) => [...t.slice(-2), { id, tone, text }]);
-      setTimeout(() => closeToast(id), 4500);
+      setTimeout(() => closeToast(id), 5500);
     },
     [closeToast],
   );
+
+  // ---- Sección visible en la columna derecha; las otras avisan con un punto si les llegó algo nuevo ----
+  const [tab, setTab] = useState('orders');
+  const unseenOrders = useUnseen(
+    payments.map((p) => `${p.id}|${p.status}`),
+    paymentsQ.loaded,
+    tab === 'orders',
+  );
+  const unseenSent = useUnseen(
+    deliveries.map((d) => d.id),
+    deliveriesQ.loaded,
+    tab === 'sent',
+  );
+  const unseenSentFailed = useUnseen(
+    deliveries.filter((d) => d.result === 'FAILED').map((d) => d.id),
+    deliveriesQ.loaded,
+    tab === 'sent',
+  );
+  const unseenReceived = useUnseen(
+    received.map((r) => r.id),
+    receivedQ.loaded,
+    tab === 'received',
+  );
+  const unseenReceivedRejected = useUnseen(
+    received.filter((r) => r.httpStatus >= 300).map((r) => r.id),
+    receivedQ.loaded,
+    tab === 'received',
+  );
+  const tabs = [
+    { id: 'orders', label: 'Pedidos y pagos', icon: 'package', count: orders.length, unseen: unseenOrders },
+    {
+      id: 'sent',
+      label: 'Webhooks enviados',
+      icon: 'send',
+      count: deliveries.length,
+      unseen: unseenSent,
+      alert: unseenSentFailed > 0,
+    },
+    {
+      id: 'received',
+      label: 'Webhooks recibidos',
+      icon: 'inbox',
+      count: received.length,
+      unseen: unseenReceived,
+      alert: unseenReceivedRejected > 0,
+    },
+  ];
+
+  // ---- Detalle abierto: inspector de un webhook enviado, uno recibido o la línea de tiempo de un pago ----
+  const [detail, setDetail] = useState(null);
+  const closeDetail = useCallback(() => setDetail(null), []);
 
   // ---- Recorrido del webhook (alimenta el diagrama animado) ----
   const [flow, setFlow] = useState({ phase: 'idle' });
   const runRef = useRef(0); // si empieza otro recorrido, el anterior deja de actualizar el diagrama
 
-  async function createOrder(producto, monto) {
+  async function createPayment(product, amount, provider) {
     const run = ++runRef.current;
     const live = () => runRef.current === run;
 
     setFlow({ phase: 'creating' });
-    let order;
+    setTab('orders');
+    let payment;
     try {
-      order = await api.createOrder(producto, monto);
+      payment = await api.createPayment(product, amount, provider);
     } catch (err) {
       if (live()) setFlow({ phase: 'error', detail: err.message });
-      notify('danger', `No se pudo crear el pedido: ${err.message}`);
+      notify('danger', `No se pudo crear el pago: ${err.message}`);
       return;
     }
-    ordersQ.refresh();
-    notify('ok', `Pedido ${shortId(order.id)} creado en el Servicio A.`);
+    refreshAll();
+    notify('ok', `Pedido de "${product}" creado. Pago ${shortId(payment.id)} en PENDING.`);
 
-    // ¿A tiene a quién avisar?
+    // ¿El proveedor tiene a quién avisar?
     let currentSubs = subscriptions;
     try {
       currentSubs = await api.listSubscriptions();
@@ -78,29 +152,51 @@ export default function App() {
       return;
     }
 
-    // Animación de los pasos internos (firma y envío no se pueden observar desde el navegador).
-    setFlow({ phase: 'delivering', active: 1 });
-    await sleep(550);
-    if (!live()) return;
-    setFlow({ phase: 'delivering', active: 2 });
-    await sleep(550);
-    if (!live()) return;
-    setFlow({ phase: 'delivering', active: 3 });
-
-    // La confirmación sí es real: se espera a que B liste el evento con el ID de este pedido.
-    const deadline = Date.now() + DELIVERY_TIMEOUT_MS;
+    // El navegador solo observa: el cambio de estado lo provoca el webhook del proveedor.
+    setFlow({ phase: 'processing' });
+    let deferred = false;
+    const deadline = Date.now() + CONFIRMATION_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      const list = await eventsQ.refresh();
+      await sleep(1000);
       if (!live()) return;
-      const received = list?.find((e) => e.id === order.id);
-      if (received) {
-        setFlow({ phase: 'delivered', latency: latencyMs(received) });
+      const [current, sent] = await Promise.all([
+        api.getPayment(payment.id).catch(() => null),
+        api.listDeliveries().catch(() => []),
+      ]);
+      if (!live()) return;
+      if (!current) continue;
+
+      if (FINAL_STATUSES.includes(current.status)) {
+        setFlow({ phase: 'delivered', status: current.status, ms: confirmationMs(current) });
+        refreshAll();
+        notify(
+          current.status === 'APPROVED' ? 'ok' : 'info',
+          `Webhook recibido: el pago ${shortId(current.id)} fue ${current.status === 'APPROVED' ? 'aprobado' : 'rechazado'}.`,
+        );
         return;
       }
-      await sleep(500);
-      if (!live()) return;
+
+      const failed = sent.find((d) => d.payload?.paymentId === payment.id && d.result === 'FAILED');
+      if (failed) {
+        setFlow({
+          phase: 'failed',
+          status: failed.payload.status,
+          http: failed.responseStatus,
+          attempts: failed.attempts,
+        });
+        refreshAll();
+        notify('danger', `El proveedor no pudo entregar el webhook ${failed.payload.status} tras ${failed.attempts} intentos.`);
+        return;
+      }
+
+      if (current.status === 'DEFERRED' && !deferred) {
+        deferred = true;
+        setFlow({ phase: 'deferred' });
+        refreshAll();
+      }
     }
     setFlow({ phase: 'timeout' });
+    refreshAll();
   }
 
   async function sendFakeSignature() {
@@ -108,43 +204,86 @@ export default function App() {
     const live = () => runRef.current === run;
 
     setFlow({ phase: 'fake-sending' });
+    setTab('received');
     try {
       const [res] = await Promise.all([api.sendFakeWebhook(), sleep(900)]);
+      receivedQ.refresh();
       if (!live()) return;
       if (res.status === 401) {
         setFlow({ phase: 'rejected' });
-        notify('ok', 'B rechazó la firma falsa con HTTP 401.');
+        notify('ok', 'La tienda rechazó la firma falsa con HTTP 401.');
       } else if (res.status >= 200 && res.status < 300) {
         setFlow({ phase: 'breach' });
-        notify('danger', 'B aceptó una firma falsa. Revisa la verificación HMAC.');
+        notify('danger', 'La tienda aceptó una firma falsa. Revisa la verificación HMAC.');
       } else {
-        setFlow({ phase: 'error', detail: `B respondió HTTP ${res.status}` });
+        setFlow({ phase: 'error', detail: `La tienda respondió HTTP ${res.status}${res.message ? `: ${res.message}` : ''}` });
       }
-      eventsQ.refresh();
     } catch (err) {
       if (live()) setFlow({ phase: 'error', detail: err.message });
       notify('danger', err.message);
     }
   }
 
-  // ---- Suscripciones ----
+  // ---- Reenvío manual de un webhook (idempotencia y recuperación) ----
+  const [replayingId, setReplayingId] = useState(null);
+
+  async function replayDelivery(id) {
+    setReplayingId(id);
+    try {
+      const delivery = await api.replayDelivery(id);
+      refreshAll();
+      const status = delivery.payload?.status;
+      if (delivery.result !== 'DELIVERED') {
+        notify(
+          'danger',
+          `El reenvío de ${status} falló: la tienda respondió ${delivery.responseStatus ? `HTTP ${delivery.responseStatus}` : 'con un error'}.`,
+        );
+      } else if (delivery.responseBody?.applied === false) {
+        notify('info', `Reenvío de ${status}: la tienda respondió 200 sin aplicar cambios (ya lo había procesado).`);
+      } else {
+        notify('ok', `Reenvío de ${status}: la tienda lo aplicó.`);
+      }
+      setDetail((current) => (current?.type === 'delivery' ? { type: 'delivery', id: delivery.id } : current));
+    } catch (err) {
+      notify('danger', `No se pudo reenviar: ${err.message}`);
+    } finally {
+      setReplayingId(null);
+    }
+  }
+
+  // ---- Simulación de tienda caída ----
+  const [togglingStore, setTogglingStore] = useState(false);
+
+  async function toggleStoreDown(next) {
+    setTogglingStore(true);
+    try {
+      await api.setStoreDown(next);
+      await simulationQ.refresh();
+      notify(
+        next ? 'danger' : 'ok',
+        next
+          ? 'Tienda caída: sus webhooks responderán 503. Haz una compra para ver los reintentos.'
+          : 'La tienda volvió. Usa "Reenviar" en la entrega fallida para recuperarla.',
+      );
+    } catch (err) {
+      notify('danger', `No se pudo cambiar la simulación: ${err.message}`);
+    } finally {
+      setTogglingStore(false);
+    }
+  }
+
+  // ---- Suscripciones en el proveedor ----
   async function addSubscription(url) {
     try {
-      // A no evita duplicados: si se registra dos veces, cada pedido dispararía el webhook dos veces.
-      let current = subscriptions;
-      try {
-        current = await api.listSubscriptions();
-      } catch {
-        /* se usa la lista que ya teníamos */
-      }
-      const duplicate = current.find((s) => s.url === url && s.event === EVENT_NAME);
-      if (duplicate) {
-        notify('info', `Esa suscripción ya estaba registrada (#${duplicate.id}).`);
-        return;
-      }
+      const before = new Set(subscriptions.map((s) => s.id));
+      // B no duplica: si la URL ya estaba registrada devuelve la suscripción existente.
       const created = await api.createSubscription(url, EVENT_NAME);
       await subsQ.refresh();
-      notify('ok', `Suscripción #${created.id} registrada.`);
+      if (before.has(created.id)) {
+        notify('info', `Esa URL ya estaba registrada (#${created.id}).`);
+      } else {
+        notify('ok', `Suscripción #${created.id} registrada en el proveedor.`);
+      }
     } catch (err) {
       notify('danger', `No se pudo registrar la suscripción: ${err.message}`);
     }
@@ -160,9 +299,17 @@ export default function App() {
     }
   }
 
+  // ---- Datos del detalle abierto (se recalculan con cada consulta, así el detalle se ve en vivo) ----
+  const openDelivery = detail?.type === 'delivery' ? deliveries.find((d) => d.id === detail.id) : null;
+  const openReceived = detail?.type === 'received' ? received.find((r) => r.id === detail.id) : null;
+  const openPayment = detail?.type === 'payment' ? payments.find((p) => p.id === detail.id) : null;
+
   return (
     <div className="app">
-      <Header statusA={serviceState(subsQ, ordersQ)} statusB={serviceState(eventsQ)} />
+      <Header
+        statusA={serviceState(ordersQ, paymentsQ, receivedQ)}
+        statusB={serviceState(subsQ, deliveriesQ, providerPaymentsQ)}
+      />
 
       <main>
         <FlowDiagram flow={flow} />
@@ -175,19 +322,71 @@ export default function App() {
               onAdd={addSubscription}
               onRemove={removeSubscription}
             />
-            <OrderCard done={orders.length > 0} onCreate={createOrder} busy={flow.phase === 'creating'} />
+            <OrderCard done={orders.length > 0} onCreate={createPayment} busy={flow.phase === 'creating'} />
+            <SecurityCard
+              storeDown={storeDown}
+              onToggleStoreDown={toggleStoreDown}
+              togglingStore={togglingStore}
+              onSend={sendFakeSignature}
+              busy={flow.phase === 'fake-sending'}
+            />
           </div>
-          <div className="col">
-            <EventsCard events={events} loaded={eventsQ.loaded} error={eventsQ.error} />
-            <OrdersCard orders={orders} events={events} />
-            <SecurityCard onSend={sendFakeSignature} busy={flow.phase === 'fake-sending'} />
+          <div className="col tabbed">
+            <SectionTabs tabs={tabs} active={tab} onChange={setTab} label="Evidencia de la demo" />
+            <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+              {tab === 'orders' && (
+                <OrdersCard
+                  orders={orders}
+                  payments={payments}
+                  loaded={ordersQ.loaded && paymentsQ.loaded}
+                  error={ordersQ.error || paymentsQ.error}
+                  onOpen={(id) => setDetail({ type: 'payment', id })}
+                />
+              )}
+              {tab === 'sent' && (
+                <DeliveriesCard
+                  deliveries={deliveries}
+                  loaded={deliveriesQ.loaded}
+                  error={deliveriesQ.error}
+                  onOpen={(id) => setDetail({ type: 'delivery', id })}
+                  onReplay={replayDelivery}
+                  replayingId={replayingId}
+                />
+              )}
+              {tab === 'received' && (
+                <ReceivedCard
+                  received={received}
+                  loaded={receivedQ.loaded}
+                  error={receivedQ.error}
+                  storeDown={storeDown}
+                  onOpen={(id) => setDetail({ type: 'received', id })}
+                />
+              )}
+            </div>
           </div>
         </div>
       </main>
 
       <footer>
-        Proyecto de Paradigmas de Programación · Investigación sobre Webhooks · Servicio A → firma HMAC → Servicio B
+        Proyecto de Paradigmas de Programación · Investigación sobre Webhooks · Servicio B (proveedor) → webhook firmado
+        con HMAC → Servicio A (tienda)
       </footer>
+
+      <DeliveryInspector
+        delivery={openDelivery}
+        onClose={closeDetail}
+        onReplay={replayDelivery}
+        replaying={replayingId === openDelivery?.id}
+      />
+      <ReceivedInspector entry={openReceived} onClose={closeDetail} />
+      <PaymentTimeline
+        payment={openPayment}
+        order={orders.find((o) => o.id === openPayment?.orderId)}
+        providerPayment={providerPayments.find((p) => p.paymentId === openPayment?.id)}
+        deliveries={deliveries.filter((d) => d.payload?.paymentId === openPayment?.id)}
+        received={received.filter((r) => r.paymentId === openPayment?.id)}
+        onClose={closeDetail}
+      />
 
       <Toasts toasts={toasts} onClose={closeToast} />
     </div>

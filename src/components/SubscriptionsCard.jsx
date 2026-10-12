@@ -3,8 +3,8 @@ import Card from './Card.jsx';
 import Icon from './Icon.jsx';
 
 // Con `npm run dev` los servicios corren en localhost; dentro de Docker se llaman por su nombre.
-const URL_DOCKER = 'http://service-b:3001/webhooks/pedido';
-const URL_LOCAL = 'http://localhost:3001/webhooks/pedido';
+const URL_DOCKER = 'http://service-a:3000/webhooks/payments';
+const URL_LOCAL = 'http://localhost:3000/webhooks/payments';
 const DEFAULT_URL = import.meta.env.DEV ? URL_LOCAL : URL_DOCKER;
 
 export default function SubscriptionsCard({ subscriptions, eventName, onAdd, onRemove }) {
@@ -29,11 +29,11 @@ export default function SubscriptionsCard({ subscriptions, eventName, onAdd, onR
     <Card
       step={1}
       done={subscriptions.length > 0}
-      title="Suscríbete al evento"
-      subtitle="Le dices a A a qué URL avisar cuando pase algo."
+      title="La tienda registra su URL"
+      subtitle="Le dice al proveedor a dónde avisar cuando un pago cambie de estado."
     >
       <form onSubmit={submit} noValidate>
-        <label htmlFor="sub-url">URL que recibirá el webhook</label>
+        <label htmlFor="sub-url">URL de webhook de la tienda</label>
         <input
           id="sub-url"
           className="mono"
@@ -46,7 +46,7 @@ export default function SubscriptionsCard({ subscriptions, eventName, onAdd, onR
         />
         <div className="chips" role="group" aria-label="URLs de ejemplo">
           <button type="button" className="chip" data-active={url === URL_DOCKER} onClick={() => setUrl(URL_DOCKER)}>
-            Con Docker · service-b
+            Con Docker · service-a
           </button>
           <button type="button" className="chip" data-active={url === URL_LOCAL} onClick={() => setUrl(URL_LOCAL)}>
             Sin Docker · localhost
@@ -58,7 +58,7 @@ export default function SubscriptionsCard({ subscriptions, eventName, onAdd, onR
           </p>
         ) : (
           <p id="sub-hint" className="hint">
-            Dentro de Docker los servicios se ven por su nombre (service-b), no por localhost.
+            Dentro de Docker los servicios se ven por su nombre (service-a), no por localhost.
           </p>
         )}
 
@@ -67,21 +67,21 @@ export default function SubscriptionsCard({ subscriptions, eventName, onAdd, onR
           <option value={eventName}>{eventName}</option>
         </select>
         <p id="event-hint" className="hint">
-          Es el único evento que dispara el Servicio A al crear un pedido.
+          El proveedor lo envía cada vez que un pago queda diferido, aprobado o rechazado.
         </p>
 
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? <span className="spinner" aria-hidden="true" /> : <Icon name="plus" size={17} />}
-          Registrar suscripción
+          Registrar en el proveedor
         </button>
       </form>
 
       <div className="list-head">
-        <h3>Suscripciones activas</h3>
+        <h3>URLs suscritas en el proveedor</h3>
         <span className="count">{subscriptions.length}</span>
       </div>
       {subscriptions.length === 0 ? (
-        <p className="empty-inline">Aún no hay ninguna. Sin suscripciones, A no tiene a quién avisar.</p>
+        <p className="empty-inline">Aún no hay ninguna. Sin suscripciones, el proveedor no tiene a quién avisar.</p>
       ) : (
         <ul className="sub-list">
           {subscriptions.map((s) => (

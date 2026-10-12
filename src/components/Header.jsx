@@ -24,12 +24,12 @@ export default function Header({ statusA, statusB }) {
         </div>
         <div>
           <h1>Webhooks Lab</h1>
-          <p>Servicio A avisa a Servicio B cuando ocurre un evento, sin que nadie pregunte.</p>
+          <p>El proveedor de pagos avisa a la tienda el resultado de cada pago, sin que nadie pregunte.</p>
         </div>
       </div>
       <div className="statuses" role="status" aria-label="Estado de los servicios">
-        <StatusPill name="Servicio A" role="dispara" state={statusA} />
-        <StatusPill name="Servicio B" role="recibe" state={statusB} />
+        <StatusPill name="Servicio A" role="tienda" state={statusA} />
+        <StatusPill name="Servicio B" role="proveedor" state={statusB} />
       </div>
     </header>
   );

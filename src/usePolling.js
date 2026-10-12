@@ -27,6 +27,48 @@ export function usePolling(fetcher, interval) {
   return { ...state, refresh };
 }
 
+// Devuelve las claves que aparecieron mientras la página está abierta (no las que ya estaban al cargar).
+export function useFreshKeys(keys, loaded) {
+  const seen = useRef(null);
+  const [fresh, setFresh] = useState(() => new Set());
+  const joined = keys.join('\n');
+
+  useEffect(() => {
+    if (!loaded) return;
+    const current = joined ? joined.split('\n') : [];
+    if (seen.current === null) {
+      seen.current = new Set(current);
+      return;
+    }
+    const added = current.filter((k) => !seen.current.has(k));
+    if (added.length) {
+      added.forEach((k) => seen.current.add(k));
+      setFresh((prev) => new Set([...prev, ...added]));
+    }
+  }, [joined, loaded]);
+
+  return fresh;
+}
+
+// Cuántas claves llegaron sin que su sección estuviera visible. Al activarla se marcan como vistas.
+export function useUnseen(keys, loaded, active) {
+  const [seen, setSeen] = useState(null);
+  const joined = keys.join('\n');
+
+  useEffect(() => {
+    if (!loaded) return;
+    setSeen((prev) => {
+      const current = joined ? joined.split('\n') : [];
+      if (prev !== null && !active) return prev;
+      if (prev !== null && current.every((k) => prev.has(k))) return prev;
+      return new Set([...(prev ?? []), ...current]);
+    });
+  }, [joined, loaded, active]);
+
+  if (!seen) return 0;
+  return keys.filter((k) => !seen.has(k)).length;
+}
+
 // Devuelve la hora actual y se actualiza cada `interval` ms.
 export function useNow(interval = 1000) {
   const [now, setNow] = useState(() => Date.now());

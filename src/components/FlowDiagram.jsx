@@ -1,10 +1,11 @@
 import Icon from './Icon.jsx';
+import { formatDuration } from '../format.js';
 
 const STEPS = [
-  { icon: 'package', who: 'Servicio A', tone: 'a', title: 'Pedido creado', desc: 'POST /pedidos' },
-  { icon: 'lock', who: 'Servicio A', tone: 'a', title: 'Payload firmado', desc: 'HMAC-SHA256 con la clave secreta' },
-  { icon: 'send', who: 'En tránsito', tone: 'transit', title: 'Webhook enviado', desc: 'POST /webhooks/pedido + X-Signature' },
-  { icon: 'shield', who: 'Servicio B', tone: 'b', title: 'Firma verificada', desc: 'Recalcula el HMAC y lo compara' },
+  { icon: 'credit-card', who: 'Servicio A · tienda', tone: 'a', title: 'Pago creado', desc: 'POST /payments → PENDING' },
+  { icon: 'clock', who: 'Servicio B · proveedor', tone: 'b', title: 'Procesando', desc: 'Responde PROCESSING y decide' },
+  { icon: 'send', who: 'En tránsito', tone: 'transit', title: 'Webhook enviado', desc: 'POST /webhooks/payments + X-Signature' },
+  { icon: 'shield', who: 'Servicio A · tienda', tone: 'a', title: 'Pago confirmado', desc: 'Verifica el HMAC y actualiza' },
 ];
 
 const range = (active) => STEPS.map((_, i) => (i < active ? 'done' : i === active ? 'active' : 'idle'));
@@ -14,54 +15,62 @@ const range = (active) => STEPS.map((_, i) => (i < active ? 'done' : i === activ
 export function describeFlow(flow) {
   switch (flow.phase) {
     case 'creating':
-      return { states: range(0), tone: 'info', text: 'Creando el pedido en el Servicio A…' };
-    case 'delivering': {
-      const texts = [
-        '',
-        'A firma el payload con HMAC-SHA256 usando la clave secreta compartida…',
-        'A envía el POST con la firma en el header X-Signature…',
-        'B recalcula la firma con su copia de la clave y la compara…',
-      ];
-      return { states: range(flow.active), tone: 'info', text: texts[flow.active] };
-    }
-    case 'delivered':
+      return { states: range(0), tone: 'info', text: 'La tienda crea el pedido y el pago en PENDING, y se lo envía al proveedor…' };
+    case 'processing':
+      return {
+        states: range(1),
+        tone: 'info',
+        text: 'El proveedor respondió PROCESSING y está procesando el pago. Nadie le pregunta: cuando termine, avisará con un webhook…',
+      };
+    case 'deferred':
+      return {
+        states: range(1),
+        tone: 'warn',
+        text: 'Llegó un webhook DEFERRED: el pago quedó diferido y el pedido sigue esperando. El proveedor enviará otro webhook con el resultado final…',
+      };
+    case 'delivered': {
+      const approved = flow.status === 'APPROVED';
       return {
         states: ['done', 'done', 'done', 'done'],
-        tone: 'ok',
-        text:
-          flow.latency != null
-            ? `B verificó la firma y registró el evento. Llegó ${flow.latency} ms después de crear el pedido.`
-            : 'B verificó la firma y registró el evento.',
+        tone: approved ? 'ok' : 'warn',
+        text: `${approved ? 'Pago aprobado: el pedido quedó pagado.' : 'Pago rechazado: el pedido quedó sin pagar.'} La tienda se enteró por el webhook firmado, ${formatDuration(flow.ms)} después de crear el pago.`,
+      };
+    }
+    case 'failed':
+      return {
+        states: ['done', 'done', 'error', 'idle'],
+        tone: 'danger',
+        text: `El proveedor no pudo entregar el webhook ${flow.status ?? ''}: la tienda respondió ${flow.http ? `HTTP ${flow.http}` : 'con un error'} en los ${flow.attempts} intentos. El pedido sigue esperando. Enciende la tienda y usa "Reenviar" en esa entrega.`,
       };
     case 'timeout':
       return {
-        states: ['done', 'done', 'done', 'error'],
+        states: ['done', 'done', 'error', 'idle'],
         tone: 'danger',
-        text: 'B no confirmó el evento en 6 segundos. Revisa que la URL de la suscripción apunte a B y que B esté en línea.',
+        text: 'La tienda no recibió el resultado a tiempo. Revisa en "Webhooks enviados" si la entrega falló y que la URL suscrita apunte a la tienda.',
       };
     case 'nosubs':
       return {
-        states: ['done', 'skipped', 'skipped', 'skipped'],
+        states: ['done', 'done', 'skipped', 'skipped'],
         tone: 'warn',
-        text: 'El pedido se guardó, pero A no tiene ninguna suscripción a "pedido.creado", así que no envió nada. Registra una en el paso 1.',
+        text: 'El pago se creó, pero el proveedor no tiene ninguna URL suscrita a "payment.updated", así que no avisará a nadie y el pago quedará en PENDING. Registra una en el paso 1.',
       };
     case 'fake-sending':
       return {
         states: ['skipped', 'skipped', 'active', 'idle'],
         tone: 'info',
-        text: 'Enviando a B un webhook con una firma inventada, sin pasar por A…',
+        text: 'Enviando a la tienda un webhook con una firma inventada, sin pasar por el proveedor…',
       };
     case 'rejected':
       return {
         states: ['skipped', 'skipped', 'done', 'error'],
-        tone: 'danger',
-        text: 'B rechazó la petición (HTTP 401): la firma no coincide y no se registró ningún evento. Es lo esperado: la verificación funciona.',
+        tone: 'ok',
+        text: 'La tienda rechazó la petición (HTTP 401): la firma no coincide y no cambió ningún pago. Es lo esperado: la verificación funciona.',
       };
     case 'breach':
       return {
         states: ['skipped', 'skipped', 'done', 'error'],
         tone: 'danger',
-        text: '¡Atención! B aceptó una petición con firma falsa. Revisa la verificación HMAC del Servicio B.',
+        text: '¡Atención! La tienda aceptó una petición con firma falsa. Revisa la verificación HMAC del Servicio A.',
       };
     case 'error':
       return {
@@ -73,7 +82,7 @@ export function describeFlow(flow) {
       return {
         states: ['idle', 'idle', 'idle', 'idle'],
         tone: 'muted',
-        text: 'Crea un pedido para ver el recorrido del webhook, paso a paso.',
+        text: 'Haz una compra para ver cómo el proveedor avisa el resultado del pago a la tienda, paso a paso.',
       };
   }
 }
@@ -105,7 +114,7 @@ export default function FlowDiagram({ flow }) {
   return (
     <section className="card flow-card" aria-label="Recorrido del webhook">
       <div className="flow-head">
-        <h2>Así viaja un webhook</h2>
+        <h2>Así se confirma un pago con un webhook</h2>
         <p>El diagrama se anima con lo que realmente responden los servicios.</p>
       </div>
 
