@@ -3,7 +3,7 @@ import { colones } from './catalog.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 
 // Compras anteriores: salen del pedido y del pago que guarda la tienda, se actualizan solas.
-export default function PurchaseHistory({ orders, payments, onOpen, limit = 6 }) {
+export default function PurchaseHistory({ orders, payments, onOpen, selectedId, limit = 6 }) {
   const paymentByOrder = new Map(payments.filter((p) => p.orderId).map((p) => [p.orderId, p]));
   const rows = [...orders]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
@@ -15,13 +15,20 @@ export default function PurchaseHistory({ orders, payments, onOpen, limit = 6 })
       <h2>
         <span aria-hidden="true">🧾</span> Mis compras
       </h2>
+      {rows.length > 0 && <p className="history-hint">Toca una compra para ver su ticket.</p>}
       {rows.length === 0 ? (
         <p className="history-empty">Todavía no has comprado nada. Tus pedidos aparecerán aquí.</p>
       ) : (
         <ul>
           {rows.map(({ order, payment }) => (
             <li key={order.id}>
-              <button type="button" onClick={() => payment && onOpen(payment.id)} disabled={!payment}>
+              <button
+                type="button"
+                onClick={() => payment && onOpen(payment.id)}
+                disabled={!payment}
+                aria-pressed={payment?.id === selectedId}
+                title="Ver el ticket de esta compra"
+              >
                 <span className="history-main">
                   <strong>{order.product}</strong>
                   <small>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { CATEGORIES, PRODUCTS, MAX_PER_PRODUCT, cartTotal, orderLabel } from './catalog.js';
+import { CATEGORIES, PRODUCTS, MAX_PER_PRODUCT, cartTotal, orderLabel, parseOrderLabel } from './catalog.js';
 import ProductCard from './ProductCard.jsx';
 import Cart from './Cart.jsx';
 import Receipt from './Receipt.jsx';
@@ -22,6 +22,8 @@ export default function Store({
   const [query, setQuery] = useState('');
   const [provider, setProvider] = useState('ONVO');
   const [purchase, setPurchase] = useState(null);
+  // Compra anterior que se está mirando (id del pago); tiene prioridad sobre el carrito y la compra en curso.
+  const [viewedId, setViewedId] = useState(null);
   const [cartError, setCartError] = useState('');
 
   const qtyOf = (id) => cart[id] ?? 0;
@@ -73,6 +75,26 @@ export default function Store({
 
   const payment = purchase ? payments.find((p) => p.id === purchase.id) : undefined;
   const order = payment ? orders.find((o) => o.id === payment.orderId) : undefined;
+
+  // Ticket de una compra vieja, armado con lo que guarda la tienda (pedido + pago).
+  const viewedPayment = viewedId ? payments.find((p) => p.id === viewedId) : undefined;
+  const viewedOrder = viewedPayment ? orders.find((o) => o.id === viewedPayment.orderId) : undefined;
+  const viewed =
+    viewedPayment && viewedOrder
+      ? {
+          id: viewedPayment.id,
+          provider: viewedPayment.provider,
+          items: parseOrderLabel(viewedOrder.product) ?? [],
+          label: viewedOrder.product,
+          total: viewedOrder.amount,
+          createdAt: viewedOrder.createdAt,
+        }
+      : null;
+
+  function openPast(paymentId) {
+    setViewedId(paymentId);
+    document.getElementById('carrito')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   return (
     <main className="store">
@@ -128,11 +150,21 @@ export default function Store({
             </div>
           )}
 
-          <PurchaseHistory orders={orders} payments={payments} onOpen={onOpenPayment} />
+          <PurchaseHistory orders={orders} payments={payments} onOpen={openPast} selectedId={viewed?.id} />
         </div>
 
         <aside className="side">
-          {purchase ? (
+          {viewed ? (
+            <Receipt
+              key={viewed.id}
+              past
+              purchase={viewed}
+              payment={viewedPayment}
+              order={viewedOrder}
+              onKeepShopping={() => setViewedId(null)}
+              onOpenDetail={() => onOpenPayment(viewed.id)}
+            />
+          ) : purchase ? (
             <Receipt
               purchase={purchase}
               payment={payment}

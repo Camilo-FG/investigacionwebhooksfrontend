@@ -1192,3 +1192,14 @@ body[data-view='tienda']::before {
     animation: none;
   }
 }
+
+.history-hint {
+  margin: -4px 0 10px;
+  font-size: 0.88rem;
+  color: var(--s-muted);
+}
+
+.history li button[aria-pressed='true'] {
+  border-color: var(--s-green);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--s-green) 25%, transparent);
+}

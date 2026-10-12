@@ -52,14 +52,14 @@ function Step({ state, title, text }) {
   );
 }
 
-export default function Receipt({ purchase, payment, order, onKeepShopping, onRetry, onReopenCheckout, onOpenDetail }) {
+export default function Receipt({ purchase, payment, order, past = false, onKeepShopping, onRetry, onReopenCheckout, onOpenDetail }) {
   const status = payment?.status ?? 'PENDING';
   const s = stages(status, purchase.provider);
   const waiting = status === 'PENDING' || status === 'DEFERRED';
   const ms = confirmationMs(payment);
 
   return (
-    <section className="panel receipt" data-tone={s.tone} aria-label="Resumen de tu compra" aria-live="polite">
+    <section className="panel receipt" id="carrito" data-tone={s.tone} aria-label="Resumen de tu compra" aria-live="polite">
       <header className="receipt-head">
         <span className="receipt-badge" aria-hidden="true">
           {s.tone === 'ok' ? '🎉' : s.tone === 'bad' ? '😕' : '⏳'}
@@ -87,14 +87,21 @@ export default function Receipt({ purchase, payment, order, onKeepShopping, onRe
       <div className="ticket" role="group" aria-label="Ticket de compra">
         <p className="ticket-title">TICKET · SÚPER WEBHOOKS</p>
         <ul>
-          {purchase.items.map(({ product, qty }) => (
-            <li key={product.id}>
-              <span>
-                {qty} × {product.name}
-              </span>
-              <span>{colones(product.price * qty)}</span>
+          {purchase.items.length === 0 ? (
+            <li>
+              <span>{purchase.label}</span>
+              <span>{colones(purchase.total)}</span>
             </li>
-          ))}
+          ) : (
+            purchase.items.map(({ product, qty }) => (
+              <li key={product.id}>
+                <span>
+                  {qty} × {product.name}
+                </span>
+                <span>{colones(product.price * qty)}</span>
+              </li>
+            ))
+          )}
         </ul>
         <p className="ticket-total">
           <span>TOTAL</span>
@@ -119,7 +126,11 @@ export default function Receipt({ purchase, payment, order, onKeepShopping, onRe
       </div>
 
       <div className="receipt-actions">
-        {status === 'REJECTED' ? (
+        {past ? (
+          <button type="button" className="pay-btn" onClick={onKeepShopping}>
+            Volver a la tienda
+          </button>
+        ) : status === 'REJECTED' ? (
           <button type="button" className="pay-btn" onClick={onRetry}>
             Volver a intentar
           </button>
@@ -128,7 +139,7 @@ export default function Receipt({ purchase, payment, order, onKeepShopping, onRe
             {waiting ? 'Esperando confirmación…' : 'Seguir comprando'}
           </button>
         )}
-        {status === 'REJECTED' && (
+        {!past && status === 'REJECTED' && (
           <button type="button" className="ghost-btn" onClick={onKeepShopping}>
             Cancelar compra
           </button>

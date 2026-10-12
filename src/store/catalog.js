@@ -50,3 +50,19 @@ export function orderLabel(lines) {
 
 export const cartTotal = (lines) => lines.reduce((sum, l) => sum + l.product.price * l.qty, 0);
 export const cartCount = (lines) => lines.reduce((sum, l) => sum + l.qty, 0);
+
+// Reconstruye las líneas de una compra vieja a partir de la etiqueta que guarda el pedido
+// ("3 artículos: Leche ×2, Pan ×1"). Devuelve null si no se puede (etiqueta cortada, producto
+// que ya no existe, pedido de otra pantalla) y el ticket muestra entonces la etiqueta tal cual.
+export function parseOrderLabel(label) {
+  const match = /^\d+ art[ií]culos?: (.+)$/.exec(label ?? '');
+  if (!match || label.endsWith('...')) return null;
+  const lines = [];
+  for (const part of match[1].split(', ')) {
+    const m = /^(.+) ×(\d+)$/.exec(part);
+    const product = m && PRODUCTS.find((p) => p.name === m[1]);
+    if (!product) return null;
+    lines.push({ product, qty: Number(m[2]) });
+  }
+  return lines;
+}
