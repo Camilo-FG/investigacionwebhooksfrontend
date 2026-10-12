@@ -1,8 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { usePolling, useUnseen } from './usePolling.js';
 import { confirmationMs, FINAL_STATUSES, shortId } from './format.js';
-import Header from './components/Header.jsx';
+import TopBar from './store/TopBar.jsx';
+import Store from './store/Store.jsx';
+import { cartCount, cartTotal, PRODUCTS } from './store/catalog.js';
 import FlowDiagram from './components/FlowDiagram.jsx';
 import SubscriptionsCard from './components/SubscriptionsCard.jsx';
 import OrderCard from './components/OrderCard.jsx';
@@ -14,12 +16,15 @@ import SectionTabs from './components/SectionTabs.jsx';
 import DeliveryInspector from './components/DeliveryInspector.jsx';
 import ReceivedInspector from './components/ReceivedInspector.jsx';
 import PaymentTimeline from './components/PaymentTimeline.jsx';
+import OnvoCheckout from './components/OnvoCheckout.jsx';
 import Toasts from './components/Toasts.jsx';
 
 // Único evento que envía el proveedor (Servicio B) cuando un pago cambia de estado.
 const EVENT_NAME = 'payment.updated';
 // Con Supabase cada consulta tarda; un pago diferido necesita dos rondas de procesamiento.
 const CONFIRMATION_TIMEOUT_MS = 30000;
+// Con ONVO hay una persona escribiendo la tarjeta, y después el webhook tarda unos segundos.
+const ONVO_CONFIRMATION_TIMEOUT_MS = 5 * 60 * 1000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -122,22 +127,42 @@ export default function App() {
   const [flow, setFlow] = useState({ phase: 'idle' });
   const runRef = useRef(0); // si empieza otro recorrido, el anterior deja de actualizar el diagrama
 
-  async function createPayment(product, amount, provider) {
+  // ---- Formulario de tarjeta de ONVO (solo mientras se paga un pago con ONVO) ----
+  const [checkout, setCheckout] = useState(null);
+
+  // ---- Vista: el supermercado (por defecto) o el panel técnico con el diagrama y los webhooks ----
+  const [view, setView] = useState('tienda');
+  useEffect(() => {
+    document.body.dataset.view = view;
+  }, [view]);
+
+  // Carrito del supermercado: { idProducto: cantidad }.
+  const [cart, setCart] = useState({});
+  const cartLines = PRODUCTS.filter((p) => cart[p.id]).map((product) => ({ product, qty: cart[product.id] }));
+
+  // onCreated(payment) se llama en cuanto la tienda crea el pago (antes de esperar el resultado).
+  async function createPayment(product, amount, provider, onCreated) {
     const run = ++runRef.current;
     const live = () => runRef.current === run;
 
-    setFlow({ phase: 'creating' });
+    setFlow({ phase: 'creating', provider });
     setTab('orders');
     let payment;
     try {
       payment = await api.createPayment(product, amount, provider);
     } catch (err) {
-      if (live()) setFlow({ phase: 'error', detail: err.message });
+      if (live()) setFlow({ phase: 'error', provider, detail: err.message });
       notify('danger', `No se pudo crear el pago: ${err.message}`);
       return;
     }
     refreshAll();
-    notify('ok', `Pedido de "${product}" creado. Pago ${shortId(payment.id)} en PENDING.`);
+    notify('ok', `Pedido creado. Pago ${shortId(payment.id)} en PENDING.`);
+    onCreated?.(payment);
+
+    if (provider === 'ONVO') {
+      await payWithOnvo(payment, live);
+      return;
+    }
 
     // ¿El proveedor tiene a quién avisar?
     let currentSubs = subscriptions;
@@ -197,6 +222,51 @@ export default function App() {
     }
     setFlow({ phase: 'timeout' });
     refreshAll();
+  }
+
+  // Con ONVO el comprador paga en el formulario del SDK y la tienda se entera por el webhook de ONVO.
+  // El navegador solo observa el pago hasta que deja de estar PENDING; nunca lo marca como aprobado.
+  async function payWithOnvo(payment, live) {
+    if (!payment.onvo?.paymentIntentId || !payment.onvo?.publishableKey) {
+      setFlow({ phase: 'error', provider: 'ONVO', detail: 'La tienda no devolvió los datos de ONVO para el formulario de pago.' });
+      notify('danger', 'La respuesta de la tienda no trae los datos de ONVO.');
+      return;
+    }
+    setCheckout({ paymentId: payment.id, onvo: payment.onvo });
+    setFlow({ phase: 'onvo-paying', provider: 'ONVO' });
+
+    const deadline = Date.now() + ONVO_CONFIRMATION_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await sleep(2000);
+      if (!live()) return;
+      const current = await api.getPayment(payment.id).catch(() => null);
+      if (!live()) return;
+      if (current && FINAL_STATUSES.includes(current.status)) {
+        setCheckout(null);
+        setFlow({ phase: 'delivered', provider: 'ONVO', status: current.status, ms: confirmationMs(current) });
+        refreshAll();
+        notify(
+          current.status === 'APPROVED' ? 'ok' : 'info',
+          `Webhook de ONVO recibido: el pago ${shortId(current.id)} fue ${current.status === 'APPROVED' ? 'aprobado' : 'rechazado'}.`,
+        );
+        return;
+      }
+    }
+    setCheckout(null);
+    setFlow({ phase: 'timeout', provider: 'ONVO' });
+    refreshAll();
+  }
+
+  // Vuelve a abrir el formulario de ONVO de una compra que sigue pendiente (por ejemplo, si se cerró el modal).
+  function reopenCheckout(purchase) {
+    if (purchase?.onvo) setCheckout({ paymentId: purchase.id, onvo: purchase.onvo });
+  }
+
+  // El SDK avisa que ONVO aceptó la tarjeta; el resultado oficial todavía lo trae el webhook.
+  function onvoPaid() {
+    setCheckout(null);
+    setFlow((f) => (f.provider === 'ONVO' && f.phase === 'onvo-paying' ? { phase: 'processing', provider: 'ONVO' } : f));
+    notify('info', 'ONVO recibió el pago. Esperando su webhook para confirmarlo…');
   }
 
   async function sendFakeSignature() {
@@ -305,12 +375,30 @@ export default function App() {
   const openPayment = detail?.type === 'payment' ? payments.find((p) => p.id === detail.id) : null;
 
   return (
-    <div className="app">
-      <Header
+    <div className="app" data-view={view}>
+      <TopBar
+        view={view}
+        onView={setView}
+        cartCount={cartCount(cartLines)}
+        cartTotal={cartTotal(cartLines)}
+        onCart={() => document.getElementById('carrito')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
         statusA={serviceState(ordersQ, paymentsQ, receivedQ)}
         statusB={serviceState(subsQ, deliveriesQ, providerPaymentsQ)}
       />
 
+      {view === 'tienda' ? (
+        <Store
+          cart={cart}
+          setCart={setCart}
+          payments={payments}
+          orders={orders}
+          createPayment={createPayment}
+          creating={flow.phase === 'creating'}
+          reopenCheckout={reopenCheckout}
+          onOpenPayment={(id) => setDetail({ type: 'payment', id })}
+        />
+      ) : (
+        <>
       <main>
         <FlowDiagram flow={flow} />
 
@@ -366,11 +454,12 @@ export default function App() {
           </div>
         </div>
       </main>
-
       <footer>
         Proyecto de Paradigmas de Programación · Investigación sobre Webhooks · Servicio B (proveedor) → webhook firmado
         con HMAC → Servicio A (tienda)
       </footer>
+        </>
+      )}
 
       <DeliveryInspector
         delivery={openDelivery}
@@ -387,6 +476,8 @@ export default function App() {
         received={received.filter((r) => r.paymentId === openPayment?.id)}
         onClose={closeDetail}
       />
+
+      <OnvoCheckout checkout={checkout} onPaid={onvoPaid} onClose={() => setCheckout(null)} />
 
       <Toasts toasts={toasts} onClose={closeToast} />
     </div>

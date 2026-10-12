@@ -1637,3 +1637,17 @@ td.actions {
     display: none;
   }
 }
+
+/* Formulario de tarjeta de ONVO (modal) */
+.onvo-box {
+  min-height: 240px;
+}
+
+.onvo-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 0.875rem;
+  color: var(--danger, #ff6b7f);
+}
