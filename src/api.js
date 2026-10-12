@@ -39,8 +39,9 @@ async function request(url, options = {}) {
 const isGatewayError = (status) => status >= 502 && status <= 504;
 
 function errorMessage(status, body) {
-  if (isGatewayError(status)) return 'El servicio no responde. ¿Está corriendo?';
   const message = body && typeof body === 'object' ? body.message : null;
+  // Un 503 con mensaje lo responde el propio servicio (p. ej. la tienda no alcanzó al proveedor).
+  if (isGatewayError(status) && !message) return 'El servicio no responde. ¿Está corriendo?';
   if (Array.isArray(message)) return message.join(', ');
   return message || `HTTP ${status}`;
 }
