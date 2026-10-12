@@ -75,15 +75,17 @@ export default function OrderCard({ done, onCreate, busy }) {
         <label htmlFor="order-provider">Proveedor de pagos</label>
         <select id="order-provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
           <option value="FAKE">Fake Payment Provider (Servicio B)</option>
-          <option value="ONVO" disabled>
-            ONVO (segunda demo, aún no integrado)
-          </option>
+          <option value="ONVO">ONVO (segunda demo, pagos de prueba reales)</option>
         </select>
 
         {error ? (
           <p className="field-error">{error}</p>
         ) : (
-          <p className="hint">El proveedor decide según el monto. El resultado llega después, por webhook.</p>
+          <p className="hint">
+            {provider === 'ONVO'
+              ? 'Pagas con una tarjeta de prueba en el formulario de ONVO. El resultado llega después, por webhook; los montos de ejemplo de arriba solo aplican al proveedor simulado.'
+              : 'El proveedor decide según el monto. El resultado llega después, por webhook.'}
+          </p>
         )}
         <button type="submit" className="btn primary" disabled={busy}>
           {busy ? <span className="spinner" aria-hidden="true" /> : <Icon name="credit-card" size={17} />}
